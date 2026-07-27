@@ -1,4 +1,5 @@
 #include "experiment.h"
+#include "policy.h"
 #include "result.h"
 #include "runner.h"
 #include "workload.h"
@@ -8,11 +9,19 @@
 #include <string.h>
 
 #define APP_NAME "ssd_policy_engine"
-#define APP_VERSION "0.3.0"
+#define APP_VERSION "0.4.0"
 
 #define DEFAULT_RESULT_PATH "results/fio_result.json"
 #define DEFAULT_RESULTS_DIRECTORY "results"
 #define DEFAULT_EXPERIMENT_CSV_PATH "results/experiment.csv"
+
+static void print_supported_policies(void)
+{
+    printf("Supported policies:\n");
+    printf("  max-iops\n");
+    printf("  min-latency\n");
+    printf("  balanced\n");
+}
 
 static void print_usage(const char *program_name)
 {
@@ -25,7 +34,8 @@ static void print_usage(const char *program_name)
         program_name
     );
     printf(
-        "  %s --experiment --workload <name> --target <path>\n",
+        "  %s --experiment --policy <name> "
+        "--workload <name> --target <path>\n",
         program_name
     );
     printf("  %s --list-workloads\n", program_name);
@@ -45,12 +55,15 @@ static void print_usage(const char *program_name)
     );
     printf(
         "  %s --experiment "
+        "--policy balanced "
         "--workload randread "
         "--target ./testdata/benchmark.bin\n\n",
         program_name
     );
 
     workload_print_supported();
+    printf("\n");
+    print_supported_policies();
 }
 
 static const char *find_argument_value(
@@ -120,14 +133,20 @@ static int run_single_benchmark(
 
 static int run_experiment(
     const workload_t *workload,
-    const char *target_path)
+    const char *target_path,
+    policy_type_t policy)
 {
     experiment_series_t series = {0};
+    policy_decision_t decision = {0};
 
     printf("\nStarting queue depth sweep\n");
     printf("--------------------------\n");
-    printf("Workload: %s\n", workload->name);
-    printf("Target:   %s\n", target_path);
+    printf("Workload:     %s\n", workload->name);
+    printf("Target:       %s\n", target_path);
+    printf(
+        "Policy:       %s\n",
+        policy_type_to_string(policy)
+    );
     printf("Queue depths: 1, 2, 4, 8, 16, 32\n");
 
     if (experiment_run_queue_depth_sweep(
@@ -145,10 +164,24 @@ static int run_experiment(
             DEFAULT_EXPERIMENT_CSV_PATH,
             workload,
             &series) != 0) {
-        fprintf(stderr, "Error: failed to write experiment CSV.\n");
+        fprintf(
+            stderr,
+            "Error: failed to write experiment CSV.\n"
+        );
         experiment_series_free(&series);
         return -1;
     }
+
+    if (policy_select(
+            policy,
+            &series,
+            &decision) != 0) {
+        fprintf(stderr, "Error: policy selection failed.\n");
+        experiment_series_free(&series);
+        return -1;
+    }
+
+    policy_print_decision(&decision);
 
     printf(
         "\nExperiment CSV saved to: %s\n",
@@ -165,9 +198,12 @@ int main(int argc, char *argv[])
     const char *workload_name;
     const char *target_path;
     const char *result_path;
+    const char *policy_name;
 
     workload_type_t workload_type;
     workload_t workload = {0};
+
+    policy_type_t policy;
 
     if (argc == 1 ||
         has_argument(argc, argv, "--help") ||
@@ -229,9 +265,35 @@ int main(int argc, char *argv[])
     }
 
     if (has_argument(argc, argv, "--experiment")) {
+        policy_name =
+            find_argument_value(argc, argv, "--policy");
+
+        if (policy_name == NULL) {
+            fprintf(
+                stderr,
+                "Error: missing --policy <name> argument.\n\n"
+            );
+            print_supported_policies();
+            return EXIT_FAILURE;
+        }
+
+        policy =
+            policy_type_from_string(policy_name);
+
+        if (policy == POLICY_INVALID) {
+            fprintf(
+                stderr,
+                "Error: unsupported policy '%s'.\n\n",
+                policy_name
+            );
+            print_supported_policies();
+            return EXIT_FAILURE;
+        }
+
         if (run_experiment(
                 &workload,
-                target_path) != 0) {
+                target_path,
+                policy) != 0) {
             return EXIT_FAILURE;
         }
 
