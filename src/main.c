@@ -1,3 +1,4 @@
+#include "result.h"
 #include "runner.h"
 #include "workload.h"
 
@@ -6,7 +7,7 @@
 #include <string.h>
 
 #define APP_NAME "ssd_policy_engine"
-#define APP_VERSION "0.1.0"
+#define APP_VERSION "0.2.0"
 #define DEFAULT_RESULT_PATH "results/fio_result.json"
 
 static void print_usage(const char *program_name)
@@ -71,8 +72,12 @@ int main(int argc, char *argv[])
     const char *workload_name;
     const char *target_path;
     const char *result_path;
+
     workload_type_t workload_type;
     workload_t workload = {0};
+
+    benchmark_result_t result = {0};
+    result_status_t result_status;
 
     if (argc == 1 ||
         has_argument(argc, argv, "--help") ||
@@ -151,6 +156,20 @@ int main(int argc, char *argv[])
     }
 
     printf("\nResult saved to: %s\n", result_path);
+
+    result_status =
+        result_parse_file(result_path, &result);
+
+    if (result_status != RESULT_SUCCESS) {
+        fprintf(
+            stderr,
+            "Error: failed to parse benchmark result: %s\n",
+            result_status_string(result_status)
+        );
+        return EXIT_FAILURE;
+    }
+
+    result_print(&result);
 
     return EXIT_SUCCESS;
 }
