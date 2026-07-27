@@ -10,6 +10,7 @@ add_executable(ssd_policy_engine
     src/workload.c
     src/runner.c
     src/result.c
+    src/experiment.c
     third_party/cjson/cJSON.c
 )
 

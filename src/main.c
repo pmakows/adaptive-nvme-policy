@@ -1,3 +1,4 @@
+#include "experiment.h"
 #include "result.h"
 #include "runner.h"
 #include "workload.h"
@@ -7,8 +8,11 @@
 #include <string.h>
 
 #define APP_NAME "ssd_policy_engine"
-#define APP_VERSION "0.2.0"
+#define APP_VERSION "0.3.0"
+
 #define DEFAULT_RESULT_PATH "results/fio_result.json"
+#define DEFAULT_RESULTS_DIRECTORY "results"
+#define DEFAULT_EXPERIMENT_CSV_PATH "results/experiment.csv"
 
 static void print_usage(const char *program_name)
 {
@@ -18,6 +22,10 @@ static void print_usage(const char *program_name)
     printf("Usage:\n");
     printf(
         "  %s --workload <name> --target <path> [--output <path>]\n",
+        program_name
+    );
+    printf(
+        "  %s --experiment --workload <name> --target <path>\n",
         program_name
     );
     printf("  %s --list-workloads\n", program_name);
@@ -32,7 +40,13 @@ static void print_usage(const char *program_name)
     printf(
         "  %s --workload mixed "
         "--target ./testdata/benchmark.bin "
-        "--output results/mixed.json\n\n",
+        "--output results/mixed.json\n",
+        program_name
+    );
+    printf(
+        "  %s --experiment "
+        "--workload randread "
+        "--target ./testdata/benchmark.bin\n\n",
         program_name
     );
 
@@ -67,6 +81,85 @@ static int has_argument(
     return 0;
 }
 
+static int run_single_benchmark(
+    const workload_t *workload,
+    const char *target_path,
+    const char *result_path)
+{
+    benchmark_result_t result = {0};
+    result_status_t result_status;
+
+    workload_print(workload);
+
+    if (runner_execute(
+            workload,
+            target_path,
+            result_path) != 0) {
+        fprintf(stderr, "Error: fio benchmark failed.\n");
+        return -1;
+    }
+
+    printf("\nResult saved to: %s\n", result_path);
+
+    result_status =
+        result_parse_file(result_path, &result);
+
+    if (result_status != RESULT_SUCCESS) {
+        fprintf(
+            stderr,
+            "Error: failed to parse benchmark result: %s\n",
+            result_status_string(result_status)
+        );
+        return -1;
+    }
+
+    result_print(&result);
+
+    return 0;
+}
+
+static int run_experiment(
+    const workload_t *workload,
+    const char *target_path)
+{
+    experiment_series_t series = {0};
+
+    printf("\nStarting queue depth sweep\n");
+    printf("--------------------------\n");
+    printf("Workload: %s\n", workload->name);
+    printf("Target:   %s\n", target_path);
+    printf("Queue depths: 1, 2, 4, 8, 16, 32\n");
+
+    if (experiment_run_queue_depth_sweep(
+            workload,
+            target_path,
+            DEFAULT_RESULTS_DIRECTORY,
+            &series) != 0) {
+        fprintf(stderr, "Error: experiment execution failed.\n");
+        return -1;
+    }
+
+    experiment_print_summary(&series);
+
+    if (experiment_write_csv(
+            DEFAULT_EXPERIMENT_CSV_PATH,
+            workload,
+            &series) != 0) {
+        fprintf(stderr, "Error: failed to write experiment CSV.\n");
+        experiment_series_free(&series);
+        return -1;
+    }
+
+    printf(
+        "\nExperiment CSV saved to: %s\n",
+        DEFAULT_EXPERIMENT_CSV_PATH
+    );
+
+    experiment_series_free(&series);
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     const char *workload_name;
@@ -75,9 +168,6 @@ int main(int argc, char *argv[])
 
     workload_type_t workload_type;
     workload_t workload = {0};
-
-    benchmark_result_t result = {0};
-    result_status_t result_status;
 
     if (argc == 1 ||
         has_argument(argc, argv, "--help") ||
@@ -115,13 +205,6 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    result_path =
-        find_argument_value(argc, argv, "--output");
-
-    if (result_path == NULL) {
-        result_path = DEFAULT_RESULT_PATH;
-    }
-
     workload_type =
         workload_type_from_string(workload_name);
 
@@ -145,31 +228,29 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    workload_print(&workload);
+    if (has_argument(argc, argv, "--experiment")) {
+        if (run_experiment(
+                &workload,
+                target_path) != 0) {
+            return EXIT_FAILURE;
+        }
 
-    if (runner_execute(
+        return EXIT_SUCCESS;
+    }
+
+    result_path =
+        find_argument_value(argc, argv, "--output");
+
+    if (result_path == NULL) {
+        result_path = DEFAULT_RESULT_PATH;
+    }
+
+    if (run_single_benchmark(
             &workload,
             target_path,
             result_path) != 0) {
-        fprintf(stderr, "Error: fio benchmark failed.\n");
         return EXIT_FAILURE;
     }
-
-    printf("\nResult saved to: %s\n", result_path);
-
-    result_status =
-        result_parse_file(result_path, &result);
-
-    if (result_status != RESULT_SUCCESS) {
-        fprintf(
-            stderr,
-            "Error: failed to parse benchmark result: %s\n",
-            result_status_string(result_status)
-        );
-        return EXIT_FAILURE;
-    }
-
-    result_print(&result);
 
     return EXIT_SUCCESS;
 }
